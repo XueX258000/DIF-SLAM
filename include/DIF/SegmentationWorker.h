@@ -32,6 +32,8 @@ struct SegmentationConfig
     float conf = 0.4f;
     float iou = 0.9f;
     bool retina_masks = true;
+    bool half = true;
+    bool deterministic = false;
     // Save raw FastSAM Everything output visualization (unprocessed masks overlay).
     // Output: Output/everything_mask/frame_XXXXXX.png (saved on segmentation frames).
     bool everything_raw_vis_enable = true;
@@ -64,6 +66,8 @@ struct SegmentationResult
     int frame_id = -1;
     double timestamp = -1.0;
     double elapsed_ms = 0.0;
+    double profile_infer_ms = 0.0;
+    double profile_post_ms = 0.0;
     std::string error;
     cv::Mat label_map; // CV_16S, value range [-1, N-1]
 };
@@ -101,7 +105,7 @@ private:
     int mPendingFrameId = -1;
     double mPendingTimestamp = -1.0;
     bool mPendingIsRgb = false;
-    std::vector<uchar> mPendingJpeg;
+    cv::Mat mPendingImage;
 
     std::mutex mMutexLatest;
     std::condition_variable mCvLatest;

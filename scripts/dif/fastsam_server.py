@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from fastsam import FastSAM, FastSAMPrompt
+from fastsam import FastSAM
+from fastsam.predict import FastSAMPredictor
 
 try:
     import torch
@@ -124,9 +125,7 @@ def _render_post_processing_vis(
     return np.clip(out_f, 0.0, 255.0).astype(np.uint8)
 
 
-def _set_deterministic(seed: int = 0) -> None:
-    # Best-effort determinism to improve run-to-run reproducibility of DIF evaluation.
-    # Note: Some CUDA kernels may remain non-deterministic; we avoid hard errors.
+def _configure_torch_runtime(deterministic: bool, seed: int = 0) -> None:
     random.seed(seed)
     np.random.seed(seed)
     if torch is None:
@@ -139,12 +138,20 @@ def _set_deterministic(seed: int = 0) -> None:
         pass
     try:
         if hasattr(torch, "backends") and hasattr(torch.backends, "cudnn"):
-            torch.backends.cudnn.benchmark = False
-            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = not bool(deterministic)
+            torch.backends.cudnn.deterministic = bool(deterministic)
+            if hasattr(torch.backends.cudnn, "allow_tf32"):
+                torch.backends.cudnn.allow_tf32 = True
+    except Exception:
+        pass
+    try:
+        if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+            torch.backends.cuda.matmul.allow_tf32 = True
     except Exception:
         pass
     # Ensure stable cublas workspace config when possible (takes effect only if set early).
-    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 
 def _read_exact(stream, n: int) -> bytes:
@@ -306,6 +313,29 @@ def _mask_iou(a: np.ndarray, b: np.ndarray) -> float:
     return inter / union if union > 0 else 0.0
 
 
+def _mask_iou_from_bbox(
+    a: np.ndarray,
+    area_a: int,
+    bbox_a: Tuple[int, int, int, int],
+    b: np.ndarray,
+    area_b: int,
+    bbox_b: Tuple[int, int, int, int],
+) -> float:
+    ax1, ay1, ax2, ay2 = bbox_a
+    bx1, by1, bx2, by2 = bbox_b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    if ix2 < ix1 or iy2 < iy1:
+        return 0.0
+    inter = int(np.logical_and(a[iy1 : iy2 + 1, ix1 : ix2 + 1], b[iy1 : iy2 + 1, ix1 : ix2 + 1]).sum())
+    if inter <= 0:
+        return 0.0
+    denom = float(int(area_a) + int(area_b) - inter)
+    return float(inter) / denom if denom > 0.0 else 0.0
+
+
 def _border_touch_sides(mask: np.ndarray) -> int:
     h, w = int(mask.shape[0]), int(mask.shape[1])
     if h <= 0 or w <= 0:
@@ -375,23 +405,23 @@ def _postprocess_masks(
     if cfg.max_masks and cfg.max_masks > 0:
         filtered = filtered[: max(cfg.max_masks * 2, cfg.max_masks)]
 
-    selected: List[Tuple[np.ndarray, Tuple[int, int, int, int], float]] = []
+    selected: List[Tuple[np.ndarray, Tuple[int, int, int, int], float, int]] = []
     for m, s, area, bbox in filtered:
         keep = True
-        for sm, sb, ss in selected:
+        for sm, sb, ss, sarea in selected:
             if _bbox_iou(bbox, sb) < 0.01:
                 continue
-            if _mask_iou(m, sm) > cfg.iou_nms:
+            if _mask_iou_from_bbox(m, area, bbox, sm, sarea, sb) > cfg.iou_nms:
                 keep = False
                 break
         if keep:
-            selected.append((m, bbox, float(s)))
+            selected.append((m, bbox, float(s), int(area)))
             if cfg.max_masks and len(selected) >= cfg.max_masks:
                 break
 
     selected_masks: List[np.ndarray] = []
     selected_scores: List[float] = []
-    for sm, sb, ss in selected:
+    for sm, sb, ss, sarea in selected:
         selected_masks.append(sm)
         selected_scores.append(float(ss))
 
@@ -508,6 +538,7 @@ class FastSAMServer:
         iou: float,
         retina_masks: bool,
         post_cfg: PostprocessConfig,
+        half: bool = True,
         save_everything_vis: bool = True,
         save_post_vis: bool = True,
     ) -> None:
@@ -518,6 +549,9 @@ class FastSAMServer:
         self.iou = float(iou)
         self.retina_masks = bool(retina_masks)
         self.post_cfg = post_cfg
+        self.half = bool(half)
+        self.predictor: Optional[FastSAMPredictor] = None
+        self.last_profile: Dict[str, float] = {}
 
         self.everything_vis_dir: Optional[str] = _default_everything_vis_dir() if bool(save_everything_vis) else None
         if self.everything_vis_dir is not None:
@@ -543,6 +577,43 @@ class FastSAMServer:
 
         with contextlib.redirect_stdout(io.StringIO()):
             self.model = FastSAM(self.weights)
+        self._setup_predictor()
+
+    def _use_half(self) -> bool:
+        return bool(self.half and self.device != "cpu" and str(self.device).startswith("cuda"))
+
+    def _setup_predictor(self) -> None:
+        overrides = self.model.overrides.copy()
+        overrides.update(
+            {
+                "conf": self.conf,
+                "iou": self.iou,
+                "mode": "predict",
+                "task": "segment",
+                "save": False,
+                "imgsz": self.imgsz,
+                "device": self.device,
+                "retina_masks": self.retina_masks,
+                "verbose": False,
+                "half": self._use_half(),
+            }
+        )
+        self.predictor = FastSAMPredictor(overrides=overrides)
+        self.predictor.setup_model(model=self.model.model, verbose=False)
+        if torch is not None:
+            try:
+                actual_device = getattr(self.predictor, "device", None)
+                cuda_name = ""
+                if hasattr(torch, "cuda") and torch.cuda.is_available():
+                    cuda_name = f" cuda_name={torch.cuda.get_device_name(0)}"
+                print(
+                    f"[fastsam_server] ready device={actual_device} requested={self.device} "
+                    f"half={1 if self._use_half() else 0} imgsz={self.imgsz} retina={1 if self.retina_masks else 0}"
+                    f"{cuda_name}",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
 
     def _maybe_save_everything_raw_vis(
         self,
@@ -599,44 +670,37 @@ class FastSAMServer:
         if image is None or image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("invalid image")
 
+        t_start = time.perf_counter()
         h, w = int(image.shape[0]), int(image.shape[1])
         if is_rgb:
             image_rgb = image
+            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         else:
+            image_bgr = image
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         def _infer() -> Any:
-            try:
-                return self.model(
-                    image_rgb,
-                    device=self.device,
-                    retina_masks=self.retina_masks,
-                    imgsz=self.imgsz,
-                    conf=self.conf,
-                    iou=self.iou,
-                    verbose=False,
-                )
-            except TypeError:
-                return self.model(
-                    image_rgb,
-                    device=self.device,
-                    retina_masks=self.retina_masks,
-                    imgsz=self.imgsz,
-                    conf=self.conf,
-                    iou=self.iou,
-                )
+            if self.predictor is None:
+                self._setup_predictor()
+            assert self.predictor is not None
+            return self.predictor(image_bgr, stream=False)
 
         with contextlib.redirect_stdout(io.StringIO()):
             try:
+                t0 = time.perf_counter()
                 results = _infer()
-                prompt = FastSAMPrompt(image_rgb, results, device=self.device)
-                ann = prompt.everything_prompt()
+                t_infer = time.perf_counter()
+                if results and len(results) > 0 and getattr(results[0], "masks", None) is not None:
+                    ann = results[0].masks.data
+                else:
+                    ann = []
             except Exception as e:
                 # Best-effort fallback: if CUDA fails, switch to CPU to keep the system running.
                 # This matches the robustness requirement in `docs/参考资料/DIF_SLAM_工程实现方案.md` (Module A).
                 if self.device != "cpu" and _looks_like_cuda_failure(e):
                     old_device = self.device
                     self.device = "cpu"
+                    self.half = False
                     if torch is not None and hasattr(torch, "cuda"):
                         try:
                             torch.cuda.empty_cache()
@@ -646,16 +710,25 @@ class FastSAMServer:
                         f"[fastsam_server] CUDA failure on device={old_device}, fallback to cpu: {type(e).__name__}: {e}",
                         file=sys.stderr,
                     )
+                    self._setup_predictor()
+                    t0 = time.perf_counter()
                     results = _infer()
-                    prompt = FastSAMPrompt(image_rgb, results, device=self.device)
-                    ann = prompt.everything_prompt()
+                    t_infer = time.perf_counter()
+                    if results and len(results) > 0 and getattr(results[0], "masks", None) is not None:
+                        ann = results[0].masks.data
+                    else:
+                        ann = []
                 else:
                     raise
 
+        t0_np = time.perf_counter()
         masks_raw, scores_raw = _ann_to_masks_and_scores(ann, h, w)
+        t_np = time.perf_counter()
         self._maybe_save_everything_raw_vis(int(frame_id), image_rgb, masks_raw)
+        t_raw_vis = time.perf_counter()
 
         masks, scores = _postprocess_masks(masks_raw, scores_raw, self.post_cfg)
+        t_post = time.perf_counter()
         label_map = _build_label_map(
             masks,
             scores,
@@ -664,14 +737,26 @@ class FastSAMServer:
             min_assign_pixels=int(self.post_cfg.min_assign_pixels),
             min_assign_ratio=float(self.post_cfg.min_assign_ratio),
         )
+        t_label = time.perf_counter()
         label_map = _cleanup_label_map_islands(label_map, int(self.post_cfg.island_min_area))
+        t_cleanup = time.perf_counter()
         self._maybe_save_post_processing_vis(int(frame_id), image_rgb, label_map)
+        t_end = time.perf_counter()
+        self.last_profile = {
+            "infer": (t_infer - t0) * 1000.0,
+            "to_numpy": (t_np - t0_np) * 1000.0,
+            "raw_vis": (t_raw_vis - t_np) * 1000.0,
+            "post_masks": (t_post - t_raw_vis) * 1000.0,
+            "label": (t_label - t_post) * 1000.0,
+            "cleanup": (t_cleanup - t_label) * 1000.0,
+            "post_vis": (t_end - t_cleanup) * 1000.0,
+            "total": (t_end - t_start) * 1000.0,
+        }
         return label_map
 
 
 def main() -> int:
     warnings.filterwarnings("ignore", category=FutureWarning)
-    _set_deterministic(0)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", required=True)
@@ -680,6 +765,8 @@ def main() -> int:
     parser.add_argument("--conf", type=float, default=0.4)
     parser.add_argument("--iou", type=float, default=0.9)
     parser.add_argument("--retina-masks", action="store_true")
+    parser.add_argument("--half", type=int, default=1)
+    parser.add_argument("--deterministic", type=int, default=0)
     parser.add_argument("--save-everything-vis", type=int, default=1)
     parser.add_argument("--save-post-vis", type=int, default=1)
     parser.add_argument("--area-min", type=int, default=600)
@@ -693,6 +780,7 @@ def main() -> int:
     parser.add_argument("--min-assign-ratio", type=float, default=0.0)
     parser.add_argument("--island-min-area", type=int, default=0)
     args = parser.parse_args()
+    _configure_torch_runtime(deterministic=(int(args.deterministic) != 0), seed=0)
 
     post_cfg = PostprocessConfig(
         area_min=args.area_min,
@@ -714,6 +802,7 @@ def main() -> int:
         iou=args.iou,
         retina_masks=bool(args.retina_masks),
         post_cfg=post_cfg,
+        half=(int(args.half) != 0),
         save_everything_vis=(int(args.save_everything_vis) != 0),
         save_post_vis=(int(args.save_post_vis) != 0),
     )
@@ -767,6 +856,7 @@ def main() -> int:
                 raise RuntimeError("png_encode_failed")
 
             elapsed_ms = (time.time() - t0) * 1000.0
+            profile = getattr(server, "last_profile", {}) or {}
             try:
                 _write_message(
                     sout,
@@ -778,6 +868,9 @@ def main() -> int:
                         "h": int(label_u16.shape[0]),
                         "w": int(label_u16.shape[1]),
                         "elapsed_ms": float(elapsed_ms),
+                        "profile_total_ms": float(profile.get("total", elapsed_ms)),
+                        "profile_infer_ms": float(profile.get("infer", 0.0)),
+                        "profile_post_ms": float(profile.get("post_masks", 0.0)),
                     },
                     png.tobytes(),
                 )

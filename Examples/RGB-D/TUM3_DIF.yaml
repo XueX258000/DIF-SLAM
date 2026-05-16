@@ -99,11 +99,11 @@ DIF.weights: "/home/xin/DIF-SLAM/weights/FastSAM_X.pt"
 DIF.device: "cuda:0"
 
 # Run segmentation every N frames.
-# For low-lag visualization, prefer 1 (possibly with DIF.sync enabled).
+# 3 keeps FastSAM asynchronous enough for real-time tracking without building a long worker backlog.
 DIF.every_n_frames: 1
 
 # JPEG quality for IPC payload (1..100)
-DIF.jpeg_quality: 90
+DIF.jpeg_quality: 80
 # Per-request IPC timeout (ms); on timeout, worker restarts the python process.
 DIF.req_timeout_ms: 12000
 # Backoff before restarting python process after a failure.
@@ -111,25 +111,28 @@ DIF.restart_backoff_ms: 200
 
 # FastSAM inference params
 DIF.imgsz: 640
-DIF.conf: 0.4
+DIF.conf: 0.40
 DIF.iou: 0.9
 DIF.retina_masks: 1
+# Use FP16 on CUDA and allow non-deterministic cuDNN autotuning for runtime speed.
+DIF.half: 1
+DIF.deterministic: 0
 
 # Save FastSAM Everything raw masks visualization (unprocessed everything output)
 # Output: Output/everything_mask/frame_XXXXXX.png (saved on segmentation frames)
-DIF.everything_raw_vis_enable: 1
+DIF.everything_raw_vis_enable: 0
 
 # Save FastSAM post-processing visualization (final label_map overlay; no text)
 # Output: Output/post_processing/frame_XXXXXX.png (saved on segmentation frames)
-DIF.post_processing_vis_enable: 1
+DIF.post_processing_vis_enable: 0
 
 # Save per-frame binary dynamic mask (255=filter/target, 0=keep/background)
 # Output: Output/binary_mask/frame_XXXXXX.png (saved on every frame)
-DIF.binary_mask_vis_enable: 1
+DIF.binary_mask_vis_enable: 0
 
 # Save per-frame sparse optical flow visualization (LK, grid sampling)
 # Output: Output/flow_vis/frame_XXXXXX.png
-DIF.flow_vis_enable: 1
+DIF.flow_vis_enable: 0
 # Note: arrows are drawn ONLY inside the current dynamic mask (D-only, from Module C). Static background is not drawn.
 # Grid step (pixels), recommended 16~24
 DIF.flow_vis_step: 20
@@ -143,8 +146,8 @@ DIF.flow_vis_max_len: 30.0
 # Save Viewer screenshots:
 # - DIF-SLAM: Current Frame -> Output/vis_result/DIF_SLAM/frame_XXXXXX.png
 # - Tracking Features (Filtered) -> Output/vis_result/Tracking_Features/frame_XXXXXX.png
-DIF.vis_result_dif_slam_enable: 1
-DIF.vis_result_tracking_features_enable: 1
+DIF.vis_result_dif_slam_enable: 0
+DIF.vis_result_tracking_features_enable: 0
 
 # Postprocess params (Module A)
 DIF.area_min: 800
@@ -165,7 +168,7 @@ DIF.island_min_area: 120
 
 # Debug-only dynamic mask generation from label_map:
 # 0=off, 1=all instances, 2=largest instance
-DIF.debug_mask_mode: 1
+DIF.debug_mask_mode: 0
 
 # Optional dilate kernel size (0=off)
 DIF.debug_dilate: 1
@@ -223,7 +226,7 @@ DIF.filter_max_lag: 2
 
 # Optional enhancement: second-pass PoseOptimization using current M_t^{dyn}.
 # If enabled, after first-pass pose + Module C outputs M_t^{dyn}, Tracking will run a second PoseOptimization.
-DIF.second_pass_enable: 1
+DIF.second_pass_enable: 0
 # Optional: allow second-pass when IMU is initialized (use inertial pose optimization instead of pure visual).
 # Default 0 to keep inertial pipeline conservative unless explicitly enabled.
 DIF.second_pass_enable_imu: 0
@@ -236,9 +239,13 @@ DIF.second_pass_iou_min: 0.50
 DIF.second_pass_dyn_ratio_delta: 0.10
 DIF.second_pass_max_lag: 1
 
-# Sync mode (recommended for demo-quality, no-lag overlay; will slow FPS to segmentation speed)
+# Sync mode is visualization-friendly but makes Tracking wait for FastSAM on submitted frames.
 DIF.sync: 1
-DIF.sync_timeout_ms: 8000
+DIF.sync_timeout_ms: 5000
+# One-shot cold-start sync: wait only for the first submitted segmentation so early frames do not build a map
+# before FastSAM has produced any masks. This costs startup latency but keeps the rest of Tracking async.
+DIF.initial_sync: 0
+DIF.initial_sync_timeout_ms: 5000
 
 #--------------------------------------------------------------------------------------------
 # Dense Mapping (RGB-D, read-only, optional)
@@ -276,7 +283,7 @@ dense.forbid_bbox_margin_px: 2
 dense.N_dense_confirm: 1
 
 # Require exact label_map alignment (1=exact, 0=allow +/-1 frame)
-dense.require_exact_label_map: 1
+dense.require_exact_label_map: 0
 
 # Max queue size for pending dense packets
 dense.queue_max: 10
@@ -369,6 +376,7 @@ DIF.B.vobs_iou_min: 0.20
 # v_obs mode:
 # - 0: centroid residual speed (legacy)
 # - 1: feature 3D residual speed (recommended; see docs/参考资料/DIF_SLAM_工程实现方案.md)
+# - 2: hybrid; centroid speed is used as fallback, feature 3D residual overrides it when available.
 DIF.B.vobs_mode: 1
 # v_obs robustness (reduce static false-D caused by pose/segmentation jitter)
 # Increase jitter noise-floor (px) to suppress false MS/D on static objects caused by segmentation/association jitter.
@@ -473,8 +481,7 @@ DIF.C.v_bg_n_min: 20
 DIF.C.v_bg_trim_frac: 0.60
 
 # Hysteresis on alpha(D)
-# 优化 (2026-01-07): 提高 tau_up 到 0.70，减少背景误判为动态的概率
-# 让进入 D 更"难一点"，减少大物体误判为动态
+# Balanced walking_xyz: lower D entry threshold to avoid keeping moving people in S.
 DIF.C.tau_up: 0.70
 DIF.C.tau_down: 0.35
 
@@ -482,7 +489,7 @@ DIF.C.tau_down: 0.35
 DIF.C.mature_min: 3
 
 # Circuit breaker thresholds (pixel domain)
-# 2026-01-07: 提高 breaker 阈值使其更保守，减少静态误判
+# Balanced walking_xyz: let blurred people trigger breaker with fewer but still robust samples.
 DIF.C.n_min: 15
 DIF.C.n_bg_min: 60
 DIF.C.r_bg_fallback_enable: 1
@@ -528,7 +535,7 @@ DIF.C.static_lambda_S: 1.05
 DIF.C.static_lambda_MS: 1.00
 DIF.C.static_lambda_D: 0.40
 # Extra hysteresis when static suppression is on (helps recover from false D)
-# 2026-01-06: 提高 static_hyst_tau_up 从 0.80 到 0.88，让有静态证据的实例更难进入 D
+# Balanced walking_xyz: avoid locking slow/blurred people as static too aggressively.
 DIF.C.static_hyst_tau_up: 0.88
 DIF.C.static_hyst_tau_down: 0.55
 
@@ -538,10 +545,9 @@ DIF.C.static_hyst_tau_down: 0.55
 DIF.C.enter_D_K: 1
 
 # Optional dilation for dyn mask (0=off)
-# 优化 (2026-01-07): 减少掩膜膨胀到 1，避免过大掩膜覆盖大量静态特征
+# Balanced walking_xyz: keep dilation small; excessive growth can remove too many static features.
 DIF.C.mask_dilate: 1
 # Additional dilation growth per lag frame (0=off; suggest 1~2 when segmentation is low-frequency)
-# 优化 (2026-01-07): 关闭逐帧膨胀增长
 DIF.C.mask_dilate_per_lag: 0
 
 # Mask alignment mitigations (Issue #1):

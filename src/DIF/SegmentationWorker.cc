@@ -175,20 +175,12 @@ void SegmentationWorker::SubmitFrame(int frame_id, double timestamp, const cv::M
     if(!mCfg.enable) return;
     if(image_bgr_or_rgb.empty()) return;
 
-    std::vector<int> params;
-    params.push_back(cv::IMWRITE_JPEG_QUALITY);
-    params.push_back(std::max(1, std::min(100, mCfg.jpeg_quality)));
-
-    std::vector<uchar> buf;
-    if(!cv::imencode(".jpg", image_bgr_or_rgb, buf, params))
-        return;
-
     std::lock_guard<std::mutex> lk(mMutexQueue);
     mHasPending = true;
     mPendingFrameId = frame_id;
     mPendingTimestamp = timestamp;
     mPendingIsRgb = is_rgb;
-    mPendingJpeg = std::move(buf);
+    mPendingImage = image_bgr_or_rgb.clone();
     mCvQueue.notify_one();
 }
 
@@ -225,7 +217,7 @@ void SegmentationWorker::ThreadMain()
         int frame_id = -1;
         double timestamp = -1.0;
         bool is_rgb = false;
-        std::vector<uchar> jpeg;
+        cv::Mat image;
 
         {
             std::unique_lock<std::mutex> lk(mMutexQueue);
@@ -234,11 +226,19 @@ void SegmentationWorker::ThreadMain()
             frame_id = mPendingFrameId;
             timestamp = mPendingTimestamp;
             is_rgb = mPendingIsRgb;
-            jpeg = std::move(mPendingJpeg);
+            image = std::move(mPendingImage);
             mHasPending = false;
         }
 
-        if(frame_id < 0 || jpeg.empty())
+        if(frame_id < 0 || image.empty())
+            continue;
+
+        std::vector<int> params;
+        params.push_back(cv::IMWRITE_JPEG_QUALITY);
+        params.push_back(std::max(1, std::min(100, mCfg.jpeg_quality)));
+
+        std::vector<uchar> jpeg;
+        if(!cv::imencode(".jpg", image, jpeg, params))
             continue;
 
         if(!EnsureProcessStarted())
@@ -376,6 +376,10 @@ bool SegmentationWorker::EnsureProcessStarted()
         args.push_back("--iou");
         args.push_back(std::to_string(mCfg.iou));
         if(mCfg.retina_masks) args.push_back("--retina-masks");
+        args.push_back("--half");
+        args.push_back(mCfg.half ? "1" : "0");
+        args.push_back("--deterministic");
+        args.push_back(mCfg.deterministic ? "1" : "0");
         args.push_back("--save-everything-vis");
         args.push_back(mCfg.everything_raw_vis_enable ? "1" : "0");
         args.push_back("--save-post-vis");
@@ -589,6 +593,8 @@ bool SegmentationWorker::ReceiveSegmentResponse(SegmentationResult& out, std::st
     out.frame_id = find_int("frame_id", -1);
     out.timestamp = find_double("timestamp", -1.0);
     out.elapsed_ms = find_double("elapsed_ms", 0.0);
+    out.profile_infer_ms = find_double("profile_infer_ms", 0.0);
+    out.profile_post_ms = find_double("profile_post_ms", 0.0);
     out.error = find_string("error");
 
     if(!out.ok)
