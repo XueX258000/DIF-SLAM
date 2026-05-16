@@ -68,7 +68,7 @@ rpe_result/
 # ============================================================
 # Model weights, datasets and large binary files
 # ============================================================
-weights/
+weights/FastSAM_X.pt
 datasets/
 dataset/
 data/
