@@ -1,0 +1,553 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters. Adjust them!
+#--------------------------------------------------------------------------------------------
+File.version: "1.0"
+
+Camera.type: "PinHole"
+
+# Camera calibration and distortion parameters (OpenCV) 
+Camera1.fx: 535.4
+Camera1.fy: 539.2
+Camera1.cx: 320.1
+Camera1.cy: 247.6
+
+Camera1.k1: 0.0
+Camera1.k2: 0.0
+Camera1.p1: 0.0
+Camera1.p2: 0.0
+
+Camera.width: 640
+Camera.height: 480
+
+# Camera frames per second 
+Camera.fps: 30
+
+# Color order of the images (0: BGR, 1: RGB. It is ignored if images are grayscale)
+# Note: For DIF IPC (JPEG) + OpenCV decode, using BGR here keeps color semantics consistent.
+Camera.RGB: 0
+
+# Close/Far threshold. Baseline times.
+Stereo.ThDepth: 40.0
+Stereo.b: 0.0747
+
+# Depth map values factor
+RGBD.DepthMapFactor: 5150.0
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+
+# ORB Extractor: Number of features per image
+# 优化 (2026-01-07): 增加特征数量到 1500，抵消 fast rotation + 过滤带来的约束损失
+ORBextractor.nFeatures: 1500
+
+# ORB Extractor: Scale factor between levels in the scale pyramid
+ORBextractor.scaleFactor: 1.2
+
+# ORB Extractor: Number of levels in the scale pyramid
+ORBextractor.nLevels: 8
+
+# ORB Extractor: Fast threshold
+# Image is divided in a grid. At each cell FAST are extracted imposing a minimum response.
+# Firstly we impose iniThFAST. If no corners are detected we impose a lower value minThFAST
+# You can lower these values if your images have low contrast
+# 优化 (2026-01-07): 降低 FAST 阈值以提取更多特征点
+ORBextractor.iniThFAST: 15
+ORBextractor.minThFAST: 5
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+#
+# Real-time viewer switch (0/1):
+# - 1: enable Pangolin 3D viewer + OpenCV image windows
+# - 0: run headless (no real-time visualization)
+# Note: `Output/vis_result/*` screenshots are produced by the Viewer thread; disabling the Viewer also disables them.
+Viewer.UseViewer: 1
+
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500.0
+
+#--------------------------------------------------------------------------------------------
+# DIF (Dynamic Instance Filtering) - Module A bootstrap (debug)
+#--------------------------------------------------------------------------------------------
+
+# Enable DIF segmentation worker (0/1)
+DIF.enable: 1
+
+# Python executable used to start FastSAM server
+# Use the fixed conda env python to avoid missing dependencies when running from non-activated shells.
+DIF.python: "/home/xin/anaconda3/envs/pslam38/bin/python"
+
+# Server script path (use absolute path so running from other CWDs still works)
+DIF.server_script: "/home/xin/DIF-SLAM/scripts/dif/fastsam_server.py"
+
+# FastSAM weights path
+DIF.weights: "/home/xin/DIF-SLAM/weights/FastSAM_X.pt"
+
+# Prefer cuda:0; you can set cpu to debug stability
+DIF.device: "cuda:0"
+
+# Run segmentation every N frames.
+# For low-lag visualization, prefer 1 (possibly with DIF.sync enabled).
+DIF.every_n_frames: 1
+
+# JPEG quality for IPC payload (1..100)
+DIF.jpeg_quality: 90
+# Per-request IPC timeout (ms); on timeout, worker restarts the python process.
+DIF.req_timeout_ms: 12000
+# Backoff before restarting python process after a failure.
+DIF.restart_backoff_ms: 200
+
+# FastSAM inference params
+DIF.imgsz: 640
+DIF.conf: 0.4
+DIF.iou: 0.9
+DIF.retina_masks: 1
+
+# Save FastSAM Everything raw masks visualization (unprocessed everything output)
+# Output: Output/everything_mask/frame_XXXXXX.png (saved on segmentation frames)
+DIF.everything_raw_vis_enable: 1
+
+# Save FastSAM post-processing visualization (final label_map overlay; no text)
+# Output: Output/post_processing/frame_XXXXXX.png (saved on segmentation frames)
+DIF.post_processing_vis_enable: 1
+
+# Save per-frame binary dynamic mask (255=filter/target, 0=keep/background)
+# Output: Output/binary_mask/frame_XXXXXX.png (saved on every frame)
+DIF.binary_mask_vis_enable: 1
+
+# Save per-frame sparse optical flow visualization (LK, grid sampling)
+# Output: Output/flow_vis/frame_XXXXXX.png
+DIF.flow_vis_enable: 1
+# Note: arrows are drawn ONLY inside the current dynamic mask (D-only, from Module C). Static background is not drawn.
+# Grid step (pixels), recommended 16~24
+DIF.flow_vis_step: 20
+# Only draw vectors with raw displacement > threshold (pixels)
+DIF.flow_vis_threshold: 1.0
+# Arrow length scale factor
+DIF.flow_vis_scale: 3.0
+# Max arrow length after scaling (pixels), <=0 disables clipping
+DIF.flow_vis_max_len: 30.0
+
+# Save Viewer screenshots:
+# - DIF-SLAM: Current Frame -> Output/vis_result/DIF_SLAM/frame_XXXXXX.png
+# - Tracking Features (Filtered) -> Output/vis_result/Tracking_Features/frame_XXXXXX.png
+DIF.vis_result_dif_slam_enable: 1
+DIF.vis_result_tracking_features_enable: 1
+
+# Postprocess params (Module A)
+DIF.area_min: 800
+# Drop overly-large masks (background-like) to improve instance completeness (0..1, 0=off)
+DIF.area_max_ratio: 0.65
+# Drop masks that touch too many image borders (>=3 often indicates background-like regions; 0=off)
+DIF.border_touch_min_sides: 3
+DIF.morph_kernel: 3
+DIF.iou_nms: 0.9
+DIF.max_masks: 120
+# Per-mask connected-components cleanup: remove tiny islands inside a mask (0=off)
+DIF.cc_min_area: 150
+# Overlap-resolution assignment thresholds: only accept a new label if it contributes enough free pixels
+DIF.min_assign_pixels: 250
+DIF.min_assign_ratio: 0.25
+# Final label_map cleanup: remove/merge tiny islands of each label (0=off)
+DIF.island_min_area: 120
+
+# Debug-only dynamic mask generation from label_map:
+# 0=off, 1=all instances, 2=largest instance
+DIF.debug_mask_mode: 1
+
+# Optional dilate kernel size (0=off)
+DIF.debug_dilate: 1
+
+# Viewer overlay mode:
+# - 0=off
+# - 1=red dyn mask (debug mask or Module C output)
+# - 2=colored instances + contours + in-mask labels
+#   输出只显示 “#<track_id> <S|D>”，并在 map_lock==true 时以 “S*” 标识（见 docs/参考资料/可视化.md）。
+DIF.viewer_overlay: 2
+# Viewer base image:
+# - 0: use grayscale (default ORB-SLAM3 style)
+# - 1: use RGB image as base (recommended to match `docs/参考资料/可视化.md`)
+DIF.viewer_base_rgb: 1
+
+# Show (weak) keypoints when overlay is enabled (0/1).
+# Only keypoints in static region will be shown to avoid clutter.
+DIF.viewer_keypoints: 1
+
+# Tracking Features (Filtered) window draw mode:
+# - tracked_only: only draw keypoints actually used by Tracking (vbMap/vbVO)
+# - static_candidates: draw all keypoints outside dyn mask (tracked points highlighted)
+DIF.viewer_filtered_draw_mode: tracked_only
+# Cap the number of drawn keypoints in this window (0=unlimited; useful for static_candidates mode)
+DIF.viewer_filtered_max_draw: 300
+
+# Instance overlay state label style (only effective when DIF.viewer_overlay=2):
+# - 0: legacy S/MS/D (MS displayed as "MS")
+# - 1: final two-state + map_lock (map_lock displayed as "S*")
+DIF.viewer_state_style: 1
+
+# Layer toggles for ablation (only effective when DIF.viewer_overlay=2)
+DIF.viewer_inst_fill_enable: 1
+DIF.viewer_inst_contour_enable: 1
+# Optional: draw 1px contour for S* (map_lock==true) instances
+DIF.viewer_inst_contour_lock_enable: 1
+DIF.viewer_inst_label_enable: 1
+DIF.viewer_hud_enable: 1
+
+# Opacity for instance fill (0..1)
+DIF.viewer_alpha_S: 0.16
+DIF.viewer_alpha_lock: 0.22
+DIF.viewer_alpha_D: 0.35
+
+# Optional: hide tiny labels for all instances by area ratio (0..1); 0=show all
+DIF.viewer_label_min_area_ratio: 0.003
+# Optional: hide tiny labels for Static(S) instances by area ratio (0..1); 0=show all (recommended)
+DIF.viewer_label_min_area_ratio_S: 0.0
+
+# Apply dynamic mask to Tracking / MapPoint creation (0=visualize only, 1=enable filtering)
+# Tip: set to 0 only when you want to inspect visualization without affecting SLAM.
+DIF.filter_enable: 1
+# Skip filtering if segmentation result is too old (frames; 0=disable)
+DIF.filter_max_lag: 2
+
+# Optional enhancement: second-pass PoseOptimization using current M_t^{dyn}.
+# If enabled, after first-pass pose + Module C outputs M_t^{dyn}, Tracking will run a second PoseOptimization.
+DIF.second_pass_enable: 1
+# Optional: allow second-pass when IMU is initialized (use inertial pose optimization instead of pure visual).
+# Default 0 to keep inertial pipeline conservative unless explicitly enabled.
+DIF.second_pass_enable_imu: 0
+# Skip second-pass when first-pass inliers are too low (avoid wasting compute).
+DIF.second_pass_min_inliers: 30
+# Second-pass trigger gate (compare M_t^{dyn} vs M_{t-1}^{dyn}):
+# - trigger if IoU < threshold OR dynamic pixel ratio change > threshold
+# - only compare when previous mask lag <= max_lag (frames)
+DIF.second_pass_iou_min: 0.50
+DIF.second_pass_dyn_ratio_delta: 0.10
+DIF.second_pass_max_lag: 1
+
+# Sync mode (recommended for demo-quality, no-lag overlay; will slow FPS to segmentation speed)
+DIF.sync: 1
+DIF.sync_timeout_ms: 8000
+
+#--------------------------------------------------------------------------------------------
+# Dense Mapping (RGB-D, read-only, optional)
+#--------------------------------------------------------------------------------------------
+
+# Master switch
+dense.enable: 1
+
+# Integration source: "keyframe" or "segframe"
+dense.integrate_on: "keyframe"
+
+# Voxel size (meters)
+# Tip: smaller => denser but more sensitive to pose noise. Recommended 0.02 for a denser map.
+dense.voxel_size_m: 0.02
+
+# Pixel sampling stride
+# Tip: 1 => densest (slowest), 2 => faster but sparser
+dense.stride: 1
+
+# Depth validity range (meters)
+dense.depth_min: 0.3
+dense.depth_max: 6.0
+
+# Forbid mask dilation (pixels)
+# Tip: increase to suppress boundary leakage/ghosting around moving instances
+dense.forbid_dilate_px: 7
+
+# Fill forbidden instance bbox to cover segmentation holes (0/1)
+dense.forbid_fill_bbox: 1
+# Extra bbox margin (pixels)
+dense.forbid_bbox_margin_px: 2
+
+# Stable-S confirmation frames before instance fusion (legacy/ablation).
+# DIF-SLAM v2.0 requires that non-D instances are allowed to fuse regardless of map_lock, so keep this at 1.
+dense.N_dense_confirm: 1
+
+# Require exact label_map alignment (1=exact, 0=allow +/-1 frame)
+dense.require_exact_label_map: 1
+
+# Max queue size for pending dense packets
+dense.queue_max: 10
+
+# Rebuild voxel map after loop closing (optional)
+dense.rebuild_after_loop: 0
+
+# DIF-SLAM v2.0 rollback (de-fusion): remove a track's dense contributions when it enters D (nonD->D).
+# This is required for "allow mapping during map_lock while guaranteeing final zero-pollution".
+dense.defusion_enable: 1
+
+# Dense point cloud output path (empty to disable export)
+dense.output_path: "Output/dense_map.ply"
+
+# Background guard near instance boundaries (pixels)
+dense.instance_guard_px: 3
+
+# Export only voxels with enough observations
+# Tip: 1 => denser, 2 => cleaner but may create holes
+dense.min_voxel_weight: 1
+
+# Export only voxels observed in enough distinct frames (0=off)
+# Tip: this is very effective at suppressing "single-frame" ghosts while keeping density.
+dense.min_voxel_frames: 2
+
+# Optional depth denoise (DenseMapping only; does NOT affect SLAM tracking)
+# Median filter kernel size (0=off; must be odd >=3)
+dense.depth_median_ksize: 3
+# Depth discontinuity (flying pixel) rejection (0=off):
+# reject if local 3x3 depth range > max(delta_m, delta_ratio * z)
+dense.depth_edge_delta_m: 0.08
+dense.depth_edge_delta_ratio: 0.02
+dense.depth_edge_min_neighbors: 4
+
+# Optional voxel-neighborhood outlier filter at export time (0=off)
+dense.min_voxel_neighbors: 1
+
+#--------------------------------------------------------------------------------------------
+# DIF - Module B (global instance tracks) & Module C (HMM + circuit breaker)
+#--------------------------------------------------------------------------------------------
+
+# Module B: enable global track association + 3D centroid/velocity observation (0/1)
+# Note: Module B consumes segmentation results; when segmentation is low-frequency, tracks update only on those frames.
+# 提示：想“看到模块 B 效果”，请先把 DIF.B.enable 设为 1，并保持 DIF.viewer_overlay=2（可搭配 DIF.sync=1 做演示级对齐）。
+DIF.B.enable: 1
+
+# Detection filtering
+DIF.B.area_min: 800
+DIF.B.max_masks: 200
+# ORB feature coverage filter (0=off). Recommended 10~30 to suppress tiny/irrelevant instances.
+# ORB feature coverage filter (0=off). Recommended 10~30 to suppress tiny/irrelevant instances.
+# For low-texture dynamic objects (e.g., balloon), the code relaxes this gate for larger masks automatically.
+DIF.B.n_feat_min: 20
+# Shape-quality filtering (0=off): suppress thin edge fragments near person boundary
+DIF.B.bbox_min_w: 12
+DIF.B.bbox_min_h: 12
+DIF.B.fill_ratio_min: 0.20
+
+# 3D centroid from mask sampling (requires depth map)
+DIF.B.sample_stride: 4
+DIF.B.sample_max_points: 3000
+DIF.B.depth_min: 0.2
+DIF.B.depth_max: 6.0
+DIF.B.n_in_min: 50
+DIF.B.mad_tau: 3.0
+
+# Matching cost weights and kernels
+DIF.B.w_iou: 0.4
+DIF.B.w_2d: 0.3
+DIF.B.w_3d: 0.3
+DIF.B.sigma_2d: 40.0
+DIF.B.sigma_3d: 0.6
+
+# Gating thresholds
+DIF.B.tau_iou_min: 0.0
+DIF.B.tau_2d_max: 150.0
+DIF.B.gate_3d_max: 1.5
+DIF.B.bbox_area_ratio_max: 4.0
+DIF.B.v_max: 2.0
+DIF.B.margin_3d: 0.5
+
+# Accept match if cost <= cost_accept
+DIF.B.cost_accept: 0.7
+
+# Track lifecycle
+DIF.B.max_miss: 20
+DIF.B.vel_ema_beta: 0.5
+# v_obs reliability gate (segmentation jitter / association uncertainty)
+DIF.B.vobs_iou_min: 0.20
+# v_obs mode:
+# - 0: centroid residual speed (legacy)
+# - 1: feature 3D residual speed (recommended; see docs/参考资料/DIF_SLAM_工程实现方案.md)
+DIF.B.vobs_mode: 1
+# v_obs robustness (reduce static false-D caused by pose/segmentation jitter)
+# Increase jitter noise-floor (px) to suppress false MS/D on static objects caused by segmentation/association jitter.
+# 2026-01-07: 降低 vobs_px_sigma 从 4.5 到 2.0，提高动态起步敏感度
+DIF.B.vobs_px_sigma: 2.0
+# Minimum dt (seconds); when dt < this threshold, do not emit v_obs (avoid amplifying noise).
+DIF.B.vobs_dt_min: 0.0
+
+# --- v_obs (feature 3D residual) params (Mode=1) ---
+# Minimum samples per instance for v_obs update
+DIF.B.vobs_match_n_min: 15
+# Cap samples per instance for runtime
+DIF.B.vobs_match_n_max: 200
+# Depth jump gate: |z_t - z_{t-1}| / z_{t-1} <= tau_z
+DIF.B.vobs_depth_jump_ratio_max: 0.20
+# Erode instance mask (in label_map space) to avoid boundary jitter
+DIF.B.vobs_mask_erode_px: 2
+# Optional: require enough non-boundary matches (N_after_erode / N_before_erode)
+DIF.B.vobs_edge_ratio_min: 0.30
+# MAD inlier threshold multiplier
+DIF.B.vobs_mad_kappa: 2.5
+# Trimmed-mean fraction (0..0.49)
+DIF.B.vobs_trim_frac: 0.20
+# Depth noise sigma (meters) for bias floor (constant model)
+DIF.B.vobs_depth_sigma_m: 0.015
+# Reject v_obs if residual sigma (robust) is too large
+DIF.B.vobs_sigma_r_max: 0.15
+# Require inlier ratio (N_in / N_raw) >= this
+DIF.B.vobs_inlier_ratio_min: 0.50
+# Quality gate (q_v in [0,1])
+DIF.B.vobs_q_min: 0.20
+DIF.B.vobs_q_n_ref: 30
+DIF.B.vobs_q_sigma_ref: 0.05
+# Optional: require gid consistency in both frames when prev label_map exists
+DIF.B.vobs_bi_label_enable: 0
+# Suppress v_obs on large planar/background-like instances (wall/floor/table-top)
+DIF.B.vobs_bg_suppress_enable: 1
+DIF.B.vobs_bg_area_ratio_min: 0.15
+# 2026-01-07: 放宽背景判定阈值，让真正动态时仍能更新 v_obs
+DIF.B.vobs_bg_z_sigma_max: 0.35
+DIF.B.vobs_bg_v_min: 0.30
+
+# Pose-quality gate for 3D centroid update (Module B 8.2)
+# If pose is poor, skip 3D update (valid3d=false) but keep 2D/IoU association.
+# 优化：降低门控值以适应剧烈相机运动场景（如 walking_rpy），原值 50 对 RPY 运动过于严格
+DIF.B.pose_inliers_min: 25
+# Set <=0 to disable r_bg gate (r_bg is computed by Module C).
+DIF.B.pose_rbg_max: -1.0
+
+# Module C: enable HMM time smoothing + reprojection-error circuit breaker (0/1)
+# If enabled, dynamic mask used for filtering comes from Module C (debug_mask_mode is ignored).
+DIF.C.enable: 1
+
+# State mode:
+# - 0: legacy 3-state HMM {S, MS, D}
+# - 1: final 2-state HMM {S, D} + map_lock (recommended; see docs/参考资料/DIF_SLAM_工程实现方案.md)
+DIF.C.state_mode: 1
+
+# 2-state HMM transition matrix A2 (row-major: SS, SD, DS, DD).
+# Default values follow docs/参考资料/DIF_SLAM_工程实现方案.md.
+DIF.C.A2_SS: 0.97
+DIF.C.A2_SD: 0.03
+DIF.C.A2_DS: 0.10
+DIF.C.A2_DD: 0.90
+
+# map_lock (state_mode=1, DIF-SLAM v2.0):
+# - map_lock indicates a lock period (uncertain-static) and MUST NOT forbid optimization or mapping by itself.
+# - When map_lock==true, sparse BA residual info and dense fusion weight should be scaled by w_lock in [w_lock_min, 1].
+# - M_t^dyn and M_forbid_map semantics are D-only (M_D).
+DIF.C.map_lock_enable: 1
+DIF.C.map_confirm_N: 5
+DIF.C.map_cooldown_N: 5
+# Minimum lock weight in w_lock schedule (see docs/参考资料/DIF_SLAM_工程实现方案.md).
+DIF.C.w_lock_min: 0.20
+
+# Dynamic mask semantics:
+# - 0: M_t^dyn = D
+# - 1: M_t^dyn = D ∪ ever_dynamic (legacy/ablation only; NOT DIF-SLAM v2.0 semantics)
+DIF.C.dyn_mask_include_ever_dynamic: 0
+# Master switch for state-based suppression in ApplyDIFMaskToMatchedMapPoints.
+# If disabled (0), only mask-based rejection is used; state-based rejection via suppressed track IDs is disabled.
+DIF.C.suppress_enable: 1
+# Legacy/ablation switches (pre v2.0):
+# - In DIF-SLAM v2.0, sparse/dense rollback is triggered on nonD->D (see [DIF-ROLLBACK]) instead of permanent ever_dynamic suppression.
+# - Keep these disabled unless you intentionally reproduce the old behavior.
+DIF.C.suppress_ever_dynamic: 0
+DIF.C.prune_ever_dynamic: 0
+
+# HMM emission params (speed in m/s)
+# 优化：降低 mu_D 使行走速度更容易被识别为动态，扩大 sigma_D 覆盖范围
+# 2026-01-06: 增加 sigma_S 从 0.02 到 0.03，扩大静态速度观测的容忍度，减少因噪声导致的静态误判为 MS
+DIF.C.sigma_S: 0.03
+DIF.C.sigma_MS: 0.05
+DIF.C.mu_D: 0.10
+DIF.C.sigma_D: 0.15
+DIF.C.v_clip: 3.0
+# Robust speed "background" level (bias) removal:
+# Subtract a robust baseline (median of the smallest fraction of current-frame v_obs) before emission update,
+# to reduce static false-D caused by pose/segmentation jitter.
+DIF.C.v_bg_enable: 1
+DIF.C.v_bg_n_min: 20
+DIF.C.v_bg_trim_frac: 0.60
+
+# Hysteresis on alpha(D)
+# 优化 (2026-01-07): 提高 tau_up 到 0.70，减少背景误判为动态的概率
+# 让进入 D 更"难一点"，减少大物体误判为动态
+DIF.C.tau_up: 0.70
+DIF.C.tau_down: 0.35
+
+# Cold-start maturity gate: require at least M matches before outputting D (breaker can override).
+DIF.C.mature_min: 3
+
+# Circuit breaker thresholds (pixel domain)
+# 2026-01-07: 提高 breaker 阈值使其更保守，减少静态误判
+DIF.C.n_min: 15
+DIF.C.n_bg_min: 60
+DIF.C.r_bg_fallback_enable: 1
+DIF.C.r_bg_trim_frac: 0.60
+DIF.C.tau_bg: 2.0
+DIF.C.tau_q: 2.8
+DIF.C.tau_dr: 2.0
+# Absolute reprojection error floor (px) for breaker activation (<=0 disables).
+# Helps avoid false positives when r_bg is very small and ratio tests become overly sensitive.
+DIF.C.tau_r_m_min: 1.5
+DIF.C.K: 2
+DIF.C.lambda_D: 1.0
+DIF.C.lambda_other: 0.001
+
+# Frontend rigid-flow residual circuit breaker (recommended on segmentation-update frames)
+# 2026-01-07: 提高 flow_n_min 到 20，减少小静态物体误判
+DIF.C.flow_enable: 1
+# Rigid-flow residual computation mode:
+# - "desc": ORB descriptor matching (default)
+# - "lk": LK optical flow (uses rigid projection as initial guess; falls back to "desc" if unavailable)
+DIF.C.flow_mode: "desc"
+DIF.C.flow_n_min: 20
+DIF.C.flow_n_bg_min: 60
+DIF.C.flow_bg_fallback_enable: 1
+DIF.C.flow_tau_bg: 2.0
+DIF.C.flow_tau_q: 2.0
+DIF.C.flow_tau_de: 0.8
+# Absolute flow error floor (px) for flow-breaker activation (<=0 disables).
+DIF.C.flow_tau_e_m_min: 0.8
+DIF.C.flow_K: 2
+DIF.C.flow_bg_trim_frac: 0.60
+
+# Static evidence suppression (reduce false positives on static background)
+# 优化：增加 static_K 减少误锁定，收紧阈值避免将动态误判为静态
+# 2026-01-06: 降低 static_K 从 6 到 4，加速静态证据累积；增强 static_lambda 效果
+DIF.C.static_enable: 1
+DIF.C.static_K: 4
+DIF.C.static_tau_q: 1.15
+DIF.C.static_tau_dr: 0.30
+DIF.C.static_flow_tau_q: 1.15
+DIF.C.static_flow_tau_de: 0.30
+DIF.C.static_lambda_S: 1.05
+DIF.C.static_lambda_MS: 1.00
+DIF.C.static_lambda_D: 0.40
+# Extra hysteresis when static suppression is on (helps recover from false D)
+# 2026-01-06: 提高 static_hyst_tau_up 从 0.80 到 0.88，让有静态证据的实例更难进入 D
+DIF.C.static_hyst_tau_up: 0.88
+DIF.C.static_hyst_tau_down: 0.55
+
+# Enter-D confirmation: require K consecutive speed-driven confirmations before switching to D.
+# Breaker (reprojection/flow) still enters D immediately.
+# 2026-01-07: 改回 1，追求"动态绝不漏检"，避免因延迟导致漏检
+DIF.C.enter_D_K: 1
+
+# Optional dilation for dyn mask (0=off)
+# 优化 (2026-01-07): 减少掩膜膨胀到 1，避免过大掩膜覆盖大量静态特征
+DIF.C.mask_dilate: 1
+# Additional dilation growth per lag frame (0=off; suggest 1~2 when segmentation is low-frequency)
+# 优化 (2026-01-07): 关闭逐帧膨胀增长
+DIF.C.mask_dilate_per_lag: 0
+
+# Mask alignment mitigations (Issue #1):
+# - mask_max_age_s: exclude very stale track masks from M_t^{dyn}
+# - mask_warp_enable: translate-warp track ROI masks based on predicted 2D centroid (lightweight propagation)
+DIF.C.mask_max_age_s: 1.0
+DIF.C.mask_warp_enable: 1
+DIF.C.mask_warp_max_dt: 1.0
+DIF.C.mask_warp_max_px: 250.0

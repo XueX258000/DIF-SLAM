@@ -1,0 +1,136 @@
+# ============================================================
+# DIF-SLAM .gitignore
+# Keep source code, headers, examples, scripts and third-party source.
+# Ignore build outputs, runtime outputs, weights, docs and analysis files.
+# ============================================================
+
+
+# ============================================================
+# Top-level build and generated files
+# ============================================================
+build/
+lib/
+
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.out
+*.exe
+
+
+# ============================================================
+# Third-party build outputs
+# Keep Thirdparty source code, but ignore compiled build/lib dirs.
+# ============================================================
+Thirdparty/**/build/
+Thirdparty/**/lib/
+
+Thirdparty/**/CMakeFiles/
+Thirdparty/**/CMakeCache.txt
+Thirdparty/**/cmake_install.cmake
+Thirdparty/**/Makefile
+Thirdparty/**/compile_commands.json
+
+
+# ============================================================
+# Runtime outputs and experiment results
+# ============================================================
+Output/
+output/
+outputs/
+result/
+results/
+vis_result/
+trajectory_result/
+ate_result/
+rpe_result/
+
+*.log
+*.txt.log
+*.ply
+*.pcd
+*.tum
+*.bag
+*.db
+*.csv
+
+
+# ============================================================
+# Model weights, datasets and large binary files
+# ============================================================
+weights/
+datasets/
+dataset/
+data/
+
+*.pth
+*.pt
+*.onnx
+*.engine
+*.trt
+*.bin
+*.weights
+
+
+# ============================================================
+# ORB-SLAM vocabulary large files
+# ============================================================
+Vocabulary/*.txt
+Vocabulary/*.bin
+
+
+# ============================================================
+# Files and directories you do not want to upload
+# ============================================================
+docs/
+result_analysis/
+requirements.txt
+
+
+# ============================================================
+# Python cache and virtual environments
+# ============================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+
+# ============================================================
+# IDE / editor files
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
+# ============================================================
+# System files
+# ============================================================
+.DS_Store
+Thumbs.db
+
+
+# ============================================================
+# Temporary and backup files
+# ============================================================
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
