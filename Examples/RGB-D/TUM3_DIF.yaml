@@ -99,7 +99,8 @@ DIF.weights: "/home/xin/DIF-SLAM/weights/FastSAM_X.pt"
 DIF.device: "cuda:0"
 
 # Run segmentation every N frames.
-# 3 keeps FastSAM asynchronous enough for real-time tracking without building a long worker backlog.
+# 1 runs FastSAM on every frame; with the optimized server and sync wait this keeps mask lag at 0
+# on TUM fr3/walking_xyz while retaining acceptable runtime.
 DIF.every_n_frames: 1
 
 # JPEG quality for IPC payload (1..100)
@@ -239,11 +240,12 @@ DIF.second_pass_iou_min: 0.50
 DIF.second_pass_dyn_ratio_delta: 0.10
 DIF.second_pass_max_lag: 1
 
-# Sync mode is visualization-friendly but makes Tracking wait for FastSAM on submitted frames.
+# Sync mode makes Tracking wait for FastSAM on submitted frames; this removes stale masks at the
+# cost of bounded per-frame segmentation latency.
 DIF.sync: 1
 DIF.sync_timeout_ms: 5000
 # One-shot cold-start sync: wait only for the first submitted segmentation so early frames do not build a map
-# before FastSAM has produced any masks. This costs startup latency but keeps the rest of Tracking async.
+# before FastSAM has produced any masks. Keep disabled when full sync is enabled.
 DIF.initial_sync: 0
 DIF.initial_sync_timeout_ms: 5000
 
@@ -375,7 +377,7 @@ DIF.B.vel_ema_beta: 0.5
 DIF.B.vobs_iou_min: 0.20
 # v_obs mode:
 # - 0: centroid residual speed (legacy)
-# - 1: feature 3D residual speed (recommended; see docs/参考资料/DIF_SLAM_工程实现方案.md)
+# - 1: feature 3D residual speed (recommended; see docs/dif_fastsam_optimization_log.md)
 # - 2: hybrid; centroid speed is used as fallback, feature 3D residual overrides it when available.
 DIF.B.vobs_mode: 1
 # v_obs robustness (reduce static false-D caused by pose/segmentation jitter)
@@ -432,7 +434,7 @@ DIF.C.enable: 1
 
 # State mode:
 # - 0: legacy 3-state HMM {S, MS, D}
-# - 1: final 2-state HMM {S, D} + map_lock (recommended; see docs/参考资料/DIF_SLAM_工程实现方案.md)
+# - 1: final 2-state HMM {S, D} + map_lock (recommended; see docs/dif_fastsam_optimization_log.md)
 DIF.C.state_mode: 1
 
 # 2-state HMM transition matrix A2 (row-major: SS, SD, DS, DD).
