@@ -134,3 +134,9 @@ temp/
 *.tmp
 *.bak
 *.backup
+
+# ============================================================
+# Results from camera trajectory and keyframe trajectory analysis
+# ============================================================
+CameraTrajectory.txt
+KeyFrameTrajectory.txt
