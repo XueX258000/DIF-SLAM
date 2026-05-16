@@ -72,6 +72,7 @@ struct DIFInstanceTrackerConfig
     // v_obs mode:
     // - 0: centroid residual speed (legacy)
     // - 1: feature 3D residual speed (recommended; see docs/参考资料/DIF_SLAM_工程实现方案.md)
+    // - 2: hybrid; centroid speed is used as a fallback, feature 3D residual overrides it when available.
     int vobs_mode = 1;
 
     // v_obs robustness common params:

@@ -622,7 +622,7 @@ bool DIFInstanceTracker::UpdateFromSegmentation(
         tr.last_v_obs_frame = -1;
         if(det.valid3d)
         {
-            if(mCfg.vobs_mode == 0)
+            if(mCfg.vobs_mode == 0 || mCfg.vobs_mode == 2)
             {
                 const double dt = (prev_ts > 0.0) ? (timestamp - prev_ts) : 0.0;
                 const bool dt_ok = (dt > 1e-3) && (mCfg.vobs_dt_min <= 0.0f || dt >= static_cast<double>(mCfg.vobs_dt_min));

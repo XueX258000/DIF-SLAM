@@ -462,6 +462,9 @@ protected:
     int mDIFViewerFilteredFeaturesMaxDraw = 300; // 0: unlimited
     bool mDIFSync = false; // if true, wait for seg result for submitted frame (visualization-friendly)
     int mDIFSyncTimeoutMs = 0; // 0: no wait
+    bool mDIFInitialSync = false; // if true, wait only for the first submitted segmentation to avoid cold-start lag
+    int mDIFInitialSyncTimeoutMs = 0; // 0: no wait
+    bool mDIFInitialSyncDone = false;
     bool mDIFSecondPassEnable = false; // if true, run a second PoseOptimization using current M_t^{dyn}
     bool mDIFSecondPassEnableIMU = false; // if true, allow second-pass when IMU is initialized (use inertial optimization)
     int mDIFSecondPassMinInliers = 30; // skip if first-pass inliers are too low (avoid wasting compute)

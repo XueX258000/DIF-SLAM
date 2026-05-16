@@ -154,6 +154,8 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
                   << " device=" << mDIFSegCfg.device
                   << " every_n_frames=" << mDIFSegCfg.every_n_frames
                   << " imgsz=" << mDIFSegCfg.imgsz
+                  << " sync=" << (mDIFSync ? 1 : 0)
+                  << " half=" << (mDIFSegCfg.half ? 1 : 0)
                   << std::endl;
         // Create SegmentationWorker but DON'T start the thread yet
         // Thread will be started after all system threads are initialized
@@ -1714,6 +1716,14 @@ bool Tracking::ParseDIFParamFile(cv::FileStorage &fSettings)
     if(!node.empty() && node.isInt())
         mDIFSegCfg.retina_masks = (node.operator int() != 0);
 
+    node = fSettings["DIF.half"];
+    if(!node.empty() && node.isInt())
+        mDIFSegCfg.half = (node.operator int() != 0);
+
+    node = fSettings["DIF.deterministic"];
+    if(!node.empty() && node.isInt())
+        mDIFSegCfg.deterministic = (node.operator int() != 0);
+
     node = fSettings["DIF.everything_raw_vis_enable"];
     if(!node.empty())
     {
@@ -1916,6 +1926,14 @@ bool Tracking::ParseDIFParamFile(cv::FileStorage &fSettings)
     if(!node.empty() && node.isInt())
         mDIFSyncTimeoutMs = std::max(0, node.operator int());
 
+    node = fSettings["DIF.initial_sync"];
+    if(!node.empty() && node.isInt())
+        mDIFInitialSync = (node.operator int() != 0);
+
+    node = fSettings["DIF.initial_sync_timeout_ms"];
+    if(!node.empty() && node.isInt())
+        mDIFInitialSyncTimeoutMs = std::max(0, node.operator int());
+
     node = fSettings["DIF.second_pass_enable"];
     if(!node.empty() && node.isInt())
         mDIFSecondPassEnable = (node.operator int() != 0);
@@ -2049,7 +2067,7 @@ bool Tracking::ParseDIFParamFile(cv::FileStorage &fSettings)
 
     node = fSettings["DIF.B.vobs_mode"];
     if(!node.empty() && node.isInt())
-        mDIFTrackCfg.vobs_mode = std::max(0, std::min(1, node.operator int()));
+        mDIFTrackCfg.vobs_mode = std::max(0, std::min(2, node.operator int()));
 
     node = fSettings["DIF.B.vobs_px_sigma"];
     if(!node.empty() && node.isReal())
@@ -2621,9 +2639,10 @@ void Tracking::MaybeEnqueueDenseMappingFromKeyFrame(KeyFrame* pKF)
         return;
     }
 
-    // DIF-SLAM v2.0 requirement: each integrated KeyFrame must have an aligned label_map/local_to_global.
-    // If mapping is missing (async segmentation / every_n_frames>1), force a synchronous segmentation for this KF.
-    if(mDIFSegCfg.enable && mpDIFSegWorker && !HasDIFSegMappingForFrameId(fid))
+    // DIF-SLAM v2.0 exact-label mode requires each integrated KeyFrame to have its own aligned
+    // label_map/local_to_global. In async/low-rate mode, avoid forcing a segmentation here unless exact
+    // alignment was explicitly requested; otherwise this quietly turns keyframe insertion into a blocking FastSAM call.
+    if(mDenseCfg.require_exact_label_map && mDIFSegCfg.enable && mpDIFSegWorker && !HasDIFSegMappingForFrameId(fid))
     {
         SegmentationResult seg;
         mpDIFSegWorker->SubmitFrame(fid, pKF->mTimeStamp, mImRGB, mbRGB);
@@ -3257,6 +3276,8 @@ void Tracking::UpdateDIFSegmentation()
                       << " cur=" << cur_fid
                       << " lag=" << lag
                       << " elapsed_ms=" << seg.elapsed_ms
+                      << " infer_ms=" << seg.profile_infer_ms
+                      << " post_ms=" << seg.profile_post_ms
                       << " label=" << seg.label_map.cols << "x" << seg.label_map.rows
                       << " debug_mask_mode=" << mDIFDebugMaskMode
                       << " filter_enable=" << (mDIFFilterEnable ? 1 : 0)
@@ -4144,7 +4165,7 @@ void Tracking::UpdateDIFTrackVobsFromFeature3D(
 {
     if(!mDIFSegCfg.enable || !mpDIFInstanceTracker)
         return;
-    if(mDIFTrackCfg.vobs_mode != 1)
+    if(mDIFTrackCfg.vobs_mode != 1 && mDIFTrackCfg.vobs_mode != 2)
         return;
     if(!allow_3d_update)
         return;
@@ -4998,10 +5019,13 @@ void Tracking::Track()
         if(do_submit)
         {
             mpDIFSegWorker->SubmitFrame(cur_id, mCurrentFrame.mTimeStamp, mImRGB, mbRGB);
-            if(mDIFSync && mDIFSyncTimeoutMs > 0)
+            const bool initial_sync_wait = (mDIFInitialSync && !mDIFInitialSyncDone && mDIFInitialSyncTimeoutMs > 0);
+            const bool regular_sync_wait = (mDIFSync && mDIFSyncTimeoutMs > 0);
+            const int wait_ms = initial_sync_wait ? mDIFInitialSyncTimeoutMs : (regular_sync_wait ? mDIFSyncTimeoutMs : 0);
+            if(wait_ms > 0)
             {
                 SegmentationResult seg;
-                if(mpDIFSegWorker->WaitForFrameResult(cur_id, mDIFSyncTimeoutMs, seg))
+                if(mpDIFSegWorker->WaitForFrameResult(cur_id, wait_ms, seg))
                 {
                     // Reuse the same consume logic (prints + caches + debug mask)
                     if(seg.frame_id != mDIFLastPrintSegFrameId)
@@ -5016,6 +5040,8 @@ void Tracking::Track()
                                       << " cur=" << cur_id
                                       << " lag=" << lag
                                       << " elapsed_ms=" << seg.elapsed_ms
+                                      << " infer_ms=" << seg.profile_infer_ms
+                                      << " post_ms=" << seg.profile_post_ms
                                       << " label=" << seg.label_map.cols << "x" << seg.label_map.rows
                                       << " debug_mask_mode=" << mDIFDebugMaskMode
                                       << " filter_enable=" << (mDIFFilterEnable ? 1 : 0)
@@ -5034,6 +5060,8 @@ void Tracking::Track()
                     if(seg.ok && !seg.label_map.empty())
                         UpdateDIFDebugMaskFromLabelMap(seg);
                 }
+                if(initial_sync_wait)
+                    mDIFInitialSyncDone = true;
             }
         }
         if(!mDIFSync)
@@ -5994,8 +6022,6 @@ void Tracking::StereoInitialization()
                 if(mDIFSegCfg.enable && mDIFFilterEnable)
                 {
                     bool in_forbid = (forbid_mask && !forbid_mask->empty() && IsInDIFMask(*forbid_mask, pt));
-                    if(!in_forbid && !mDIFDynMaskLast.empty() && IsInDIFMask(mDIFDynMaskLast, pt))
-                        in_forbid = true;
                     if(in_forbid)
                     {
                         dif_init_skipped_forbid++;
@@ -6044,8 +6070,6 @@ void Tracking::StereoInitialization()
                     if(mDIFSegCfg.enable && mDIFFilterEnable)
                     {
                         bool in_forbid = (forbid_mask && !forbid_mask->empty() && IsInDIFMask(*forbid_mask, pt));
-                        if(!in_forbid && !mDIFDynMaskLast.empty() && IsInDIFMask(mDIFDynMaskLast, pt))
-                            in_forbid = true;
                         if(in_forbid)
                         {
                             dif_init_skipped_forbid++;
@@ -6994,8 +7018,6 @@ void Tracking::CreateNewKeyFrame()
                     if(mDIFSegCfg.enable && mDIFFilterEnable)
                     {
                         bool in_forbid = (forbid_mask && !forbid_mask->empty() && IsInDIFMask(*forbid_mask, pt));
-                        if(!in_forbid && !mDIFDynMaskLast.empty() && IsInDIFMask(mDIFDynMaskLast, pt))
-                            in_forbid = true;
                         if(in_forbid)
                         {
                             dif_kf_skipped_forbid++;
